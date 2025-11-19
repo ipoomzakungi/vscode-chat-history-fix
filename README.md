@@ -66,6 +66,19 @@ python3 fix_chat_session_index_v2.py
 python3 fix_chat_session_index_v2.py <workspace_id>
 ```
 
+This script supports the same safety flags as v3:
+
+```bash
+# Preview changes without writing the DB
+python3 fix_chat_session_index_v2.py <workspace_id> --dry-run
+
+# Apply the fix without prompts
+python3 fix_chat_session_index_v2.py <workspace_id> --yes
+
+# Remove orphaned index entries (default is to keep them)
+python3 fix_chat_session_index_v2.py <workspace_id> --remove-orphans
+```
+
 ---
 
 ## Important Notes
