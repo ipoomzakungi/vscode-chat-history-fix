@@ -10,7 +10,7 @@ A utility to repair corrupted chat session indices in VS Code's workspace storag
 ### Step 1: Preview Changes
 
 ```bash
-python3 fix_chat_session_index_v3.py --dry-run
+python3 fix_chat_history.py --dry-run
 ```
 
 Displays affected workspaces and sessions to be restored without modifying any files.
@@ -20,7 +20,7 @@ Displays affected workspaces and sessions to be restored without modifying any f
 **Close VS Code completely**, then run:
 
 ```bash
-python3 fix_chat_session_index_v3.py
+python3 fix_chat_history.py
 ```
 
 ### Step 3: Verify
@@ -74,61 +74,68 @@ The tool performs the following operations:
 
 ---
 
-## Available Scripts
+## Usage
 
-### Option 1: Automatic Repair (Recommended)
+### Quick Start (Recommended)
 
-`fix_chat_session_index_v3.py` - Automatically detects and repairs all affected workspaces.
+Auto-repair all workspaces that need fixing:
 
 ```bash
-# See what would be fixed (safe preview)
-python3 fix_chat_session_index_v3.py --dry-run
+# Safe preview - see what would be fixed
+python3 fix_chat_history.py --dry-run
 
 # Fix everything (asks for confirmation)
-python3 fix_chat_session_index_v3.py
+python3 fix_chat_history.py
 
 # Fix everything automatically (no prompts)
-python3 fix_chat_session_index_v3.py --yes
+python3 fix_chat_history.py --yes
 ```
 
-### Option 2: Manual Workspace Selection
+### List Workspaces
 
-`fix_chat_session_index_v2.py` - Repair specific workspace by ID.
+See all VS Code workspaces with chat sessions:
 
 ```bash
-# List your workspaces
-python3 fix_chat_session_index_v2.py
-
-# Fix a specific workspace
-python3 fix_chat_session_index_v2.py <workspace_id>
+python3 fix_chat_history.py --list
 ```
 
-Supports the same options as v3:
+This shows you which workspaces have sessions and which need repair.
+
+### Repair Specific Workspace
+
+If you want to fix only one workspace:
 
 ```bash
-# Preview changes without writing the DB
-python3 fix_chat_session_index_v2.py <workspace_id> --dry-run
+# Fix a specific workspace by ID
+python3 fix_chat_history.py <workspace_id>
 
-# Apply the fix without prompts
-python3 fix_chat_session_index_v2.py <workspace_id> --yes
-
-# Remove orphaned index entries (default is to keep them)
-python3 fix_chat_session_index_v2.py <workspace_id> --remove-orphans
-
-# Copy orphaned session files from other workspaces (recover them!)
-python3 fix_chat_session_index_v2.py <workspace_id> --recover-orphans
+# Example
+python3 fix_chat_history.py f4c750964946a489902dcd863d1907de
 ```
 
-**🆕 Recovery Feature:**  
-The `--recover-orphans` flag automatically copies session files from other workspaces when orphaned entries are detected. Perfect for recovering sessions that were accidentally associated with the wrong workspace!
+### Advanced Options
+
+```bash
+# Recover orphaned sessions from other workspaces
+python3 fix_chat_history.py --recover-orphans
+
+# Remove orphaned index entries (default: keep them)
+python3 fix_chat_history.py --remove-orphans
+
+# Combine flags: recover orphans + auto-confirm
+python3 fix_chat_history.py --recover-orphans --yes
+
+# Help and all options
+python3 fix_chat_history.py --help
+```
 
 ---
 
 ## Cross-Workspace Orphan Detection 💡
 
-When the repair tools detect orphaned sessions (entries in the index but no file on disk), they automatically check **all other workspaces** to see if the session file exists elsewhere.
+When the tool detects orphaned sessions (entries in the index but no file on disk), it automatically checks **all other workspaces** to see if the session file exists elsewhere.
 
-**🆕 Project Folder Matching:** The tools now intelligently detect if an orphaned session belongs to the same project by comparing folder names!
+**🆕 Project Folder Matching:** The tool now intelligently detects if an orphaned session belongs to the same project by comparing folder names!
 
 This helps you:
 - **Recover accidentally moved sessions** - If a session was associated with the wrong workspace
@@ -152,7 +159,7 @@ This helps you:
 
 ### How It Works
 
-The tools extract the project folder name from both workspaces and compare:
+The tool extracts the project folder name from both workspaces and compares:
 - Current workspace: `/home/user/workspace/my-app` → Project: `my-app`
 - Other workspace: `/home/user/old-workspace/my-app` → Project: `my-app`
 - **Match found!** ⭐ These are likely the same project
@@ -183,10 +190,10 @@ This means:
 
 ```bash
 # Automatically copy orphaned sessions from other workspaces
-python3 fix_chat_session_index_v2.py <workspace-id> --recover-orphans
+python3 fix_chat_history.py --recover-orphans
 
-# Or for all workspaces
-python3 fix_chat_session_index_v3.py --recover-orphans
+# Or for a specific workspace
+python3 fix_chat_history.py <workspace-id> --recover-orphans
 ```
 
 **Method 2: Manual Copy**
@@ -197,7 +204,7 @@ cp ~/.config/Code/User/workspaceStorage/<source-workspace-id>/chatSessions/<sess
    ~/.config/Code/User/workspaceStorage/<target-workspace-id>/chatSessions/
 
 # Then re-run the repair tool to add it to the index
-python3 fix_chat_session_index_v2.py <target-workspace-id>
+python3 fix_chat_history.py <target-workspace-id>
 ```
 
 ---
@@ -259,7 +266,7 @@ python3 fix_chat_session_index_v2.py <target-workspace-id>
 🔍 DRY RUN COMPLETE
 
 To apply these changes, run without --dry-run:
-   python3 fix_chat_session_index_v3.py
+   python3 fix_chat_history.py
 ```
 
 ### Actual Repair

@@ -29,8 +29,8 @@ chatSessions/
 - These are "ghost" references to deleted/missing sessions
 
 **Cross-Workspace Detection:**
-- The repair tools now check if orphaned sessions exist in **other workspaces**
-- **🆕 Smart Project Matching:** Tools compare project folder names to identify if sessions belong to the same project
+- The tool now checks if orphaned sessions exist in **other workspaces**
+- **🆕 Smart Project Matching:** The tool compares project folder names to identify if sessions belong to the same project
 - If found, you'll see messages like:
   ```
   💡 Session abc12345... found in workspace 68afb7eb (file:///home/user/workspace/my-app)
@@ -78,15 +78,21 @@ You have:
 
 1. **First, restore missing sessions:**
    ```bash
-   python3 fix_chat_session_index_v3.py --dry-run
+   python3 fix_chat_history.py --dry-run
    ```
    This will add the 2 missing sessions to the index.
 
 2. **Optionally clean up orphans:**
    ```bash
-   python3 fix_chat_session_index_v3.py --remove-orphans
+   python3 fix_chat_history.py --remove-orphans
    ```
    This will remove the 16 ghost entries.
+
+3. **Recover orphaned sessions from other workspaces:**
+   ```bash
+   python3 fix_chat_history.py --recover-orphans
+   ```
+   This will automatically copy session files from other workspaces if they exist.
 
 ### Why keep orphans by default?
 
@@ -94,6 +100,7 @@ You have:
 - On another drive that's not mounted
 - In a backup folder
 - Temporarily moved
+- In another workspace (use --recover-orphans to get them back!)
 
 Keeping orphaned entries by default prevents accidental data loss. You can always remove them later with `--remove-orphans`.
 
@@ -103,7 +110,19 @@ Keeping orphaned entries by default prevents accidental data loss. You can alway
 
 **Yes, you can move session files!**
 
-### How to Move a Session
+### Automatic Method (Recommended)
+
+Use the `--recover-orphans` flag to automatically copy sessions:
+
+```bash
+# Recover all orphaned sessions from other workspaces
+python3 fix_chat_history.py --recover-orphans
+
+# Or for a specific workspace
+python3 fix_chat_history.py <workspace-id> --recover-orphans
+```
+
+### Manual Method
 
 1. **Find the session file:**
    ```bash
@@ -119,7 +138,7 @@ Keeping orphaned entries by default prevents accidental data loss. You can alway
 
 3. **Rebuild the target workspace index:**
    ```bash
-   python3 fix_chat_session_index_v2.py <workspace-B>
+   python3 fix_chat_history.py <workspace-B>
    ```
 
 The session will now appear in workspace B!
