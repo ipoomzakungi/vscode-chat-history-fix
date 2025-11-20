@@ -30,10 +30,14 @@ chatSessions/
 
 **Cross-Workspace Detection:**
 - The repair tools now check if orphaned sessions exist in **other workspaces**
-- If found, you'll see a message like:
+- **🆕 Smart Project Matching:** Tools compare project folder names to identify if sessions belong to the same project
+- If found, you'll see messages like:
   ```
-  💡 Session abc12345... found in workspace 68afb7eb (file:///home/user/other-project)
+  💡 Session abc12345... found in workspace 68afb7eb (file:///home/user/workspace/my-app)
+     ⭐ Same project folder: 'my-app' - likely belongs here!
   ```
+- The ⭐ marker highlights sessions from the **same project folder** - these are prime candidates for recovery
+- Sessions from different projects are also shown, but without the star
 - This helps you recover sessions that may have been accidentally moved or associated with the wrong workspace
 
 **What happens by default:**
@@ -48,8 +52,10 @@ chatSessions/
 ```
 Index has:
   - abc123 → ❌ File missing (orphan) → Kept by default
-              💡 Found in workspace XYZ - you can copy it!
+              💡 Found in workspace XYZ (different-project) - you can copy it if needed
   - def456 → ❌ File missing (orphan) → Kept by default
+              💡 Found in workspace ABC (my-app)
+              ⭐ Same project folder: 'my-app' - likely belongs here!
   - ghi789 → ✅ File exists → Will remain
   
 With --remove-orphans:
@@ -57,6 +63,8 @@ With --remove-orphans:
   - def456 → 🗑️ Removed from index
   - ghi789 → ✅ Kept (file exists)
 ```
+
+**💡 Pro Tip:** Sessions marked with ⭐ (same project folder) are the best candidates for recovery!
 
 ---
 

@@ -114,7 +114,13 @@ python3 fix_chat_session_index_v2.py <workspace_id> --yes
 
 # Remove orphaned index entries (default is to keep them)
 python3 fix_chat_session_index_v2.py <workspace_id> --remove-orphans
+
+# Copy orphaned session files from other workspaces (recover them!)
+python3 fix_chat_session_index_v2.py <workspace_id> --recover-orphans
 ```
+
+**🆕 Recovery Feature:**  
+The `--recover-orphans` flag automatically copies session files from other workspaces when orphaned entries are detected. Perfect for recovering sessions that were accidentally associated with the wrong workspace!
 
 ---
 
@@ -122,27 +128,68 @@ python3 fix_chat_session_index_v2.py <workspace_id> --remove-orphans
 
 When the repair tools detect orphaned sessions (entries in the index but no file on disk), they automatically check **all other workspaces** to see if the session file exists elsewhere.
 
+**🆕 Project Folder Matching:** The tools now intelligently detect if an orphaned session belongs to the same project by comparing folder names!
+
 This helps you:
 - **Recover accidentally moved sessions** - If a session was associated with the wrong workspace
-- **Identify migration opportunities** - See which sessions can be copied from other workspaces
-- **Understand orphaned entries** - Know if they're truly lost or just in the wrong place
+- **Identify same-project sessions** - Highlights sessions from the same project folder (e.g., both workspaces have "my-app" in the path)
+- **Understand orphaned entries** - Know if they're truly lost or just in the wrong workspace
+
+### Example Output
+
+**Orphan from a different project:**
+```
+🗑️  Orphaned in index: 2
+   💡 Session abc12345... found in workspace a1b2c3d4 (/home/user/other-project)
+```
+
+**Orphan from the SAME project (highlighted!):**
+```
+🗑️  Orphaned in index: 2
+   💡 Session def67890... found in workspace e5f6g7h8 (file:///home/user/workspace/my-app)
+      ⭐ Same project folder: 'my-app' - likely belongs here!
+```
+
+### How It Works
+
+The tools extract the project folder name from both workspaces and compare:
+- Current workspace: `/home/user/workspace/my-app` → Project: `my-app`
+- Other workspace: `/home/user/old-workspace/my-app` → Project: `my-app`
+- **Match found!** ⭐ These are likely the same project
+
+This is especially helpful when you:
+- Switch between different VS Code workspace configurations for the same project
+- Have multiple workspace IDs pointing to the same folder
+- Moved or renamed your project folder
 
 ### Example
 
 ```
 🗑️  Orphaned in index: 2 (will be kept - use --remove-orphans to remove)
    💡 Session abc12345... found in workspace a1b2c3d4 (/home/user/other-project)
+   💡 Session def67890... found in workspace e5f6g7h8 (file:///home/user/workspace/my-app)
+      ⭐ Same project folder: 'my-app' - likely belongs here!
 ```
 
 This means:
-- Session `abc12345` is referenced in the current workspace's index
-- But the `.json` file doesn't exist in the current workspace
-- The file **was found** in workspace `a1b2c3d4` (other-project folder)
-- You can copy it if you want to recover it in the current workspace
+- Session `abc12345` is in the index but file missing - found in a **different project**
+- Session `def67890` is in the index but file missing - found in the **same project** (my-app)
+- The ⭐ marker highlights sessions that likely belong to your current project
+- You can copy either file if you want to recover it
 
 ### How to Recover Cross-Workspace Sessions
 
-If the tool shows a session exists in another workspace:
+**Method 1: Automatic Recovery (Recommended)** 🆕
+
+```bash
+# Automatically copy orphaned sessions from other workspaces
+python3 fix_chat_session_index_v2.py <workspace-id> --recover-orphans
+
+# Or for all workspaces
+python3 fix_chat_session_index_v3.py --recover-orphans
+```
+
+**Method 2: Manual Copy**
 
 ```bash
 # Copy the session file from the other workspace
