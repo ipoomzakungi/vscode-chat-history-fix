@@ -12,20 +12,24 @@ Features:
 - Automatically repairs all corrupted workspaces
 - Shows detailed report of what was fixed
 - Optionally removes orphaned index entries
+- Can recover orphaned sessions from other workspaces
 
 Usage:
-    python3 fix_chat_session_index_v3.py [--dry-run] [--yes] [--remove-orphans]
+    python3 fix_chat_session_index_v3.py [OPTIONS]
     
 Options:
     --dry-run          Show what would be fixed without making changes
     --yes              Skip confirmation prompts and fix everything
     --remove-orphans   Remove orphaned index entries (sessions in index but no file)
                        By default, orphaned entries are kept for safety
+    --recover-orphans  Copy orphaned session files from other workspaces when found
+                       This restores sessions that exist elsewhere
 
 What are orphaned entries?
     - Index entries for sessions where the .json file no longer exists
     - Usually safe to remove, but kept by default to avoid data loss
     - Use --remove-orphans only if you're sure you want to delete them
+    - Use --recover-orphans to copy the files back from other workspaces
 
 IMPORTANT: Close VS Code completely before running this script!
 """
@@ -78,16 +82,21 @@ class WorkspaceInfo:
         # Load workspace metadata
         workspace_json = workspace_dir / "workspace.json"
         self.folder = None
+        self.workspace_file = None
         if workspace_json.exists():
             try:
                 with open(workspace_json, 'r') as f:
                     info = json.load(f)
+                    # Check for folder-based workspace
                     if 'folder' in info:
                         folder = info['folder']
                         if isinstance(folder, str):
                             self.folder = folder
                         elif isinstance(folder, dict) and 'path' in folder:
                             self.folder = folder['path']
+                    # Check for .code-workspace file
+                    elif 'workspace' in info:
+                        self.workspace_file = info['workspace']
             except:
                 pass
 
@@ -113,6 +122,26 @@ class WorkspaceInfo:
                     self.sessions_in_index = set(index.get("entries", {}).keys())
             except:
                 pass
+    
+    def get_display_name(self) -> str:
+        """Get a user-friendly display name for this workspace."""
+        # Try to get name from folder
+        if self.folder:
+            project_name = extract_project_name(self.folder)
+            if project_name:
+                return f"{project_name} ({self.id[:8]}...) [Folder]"
+        
+        # Try to get name from .code-workspace file
+        if self.workspace_file:
+            workspace_name = extract_project_name(self.workspace_file)
+            if workspace_name:
+                # Remove .code-workspace extension if present
+                if workspace_name.endswith('.code-workspace'):
+                    workspace_name = workspace_name[:-15]
+                return f"{workspace_name} ({self.id[:8]}...) [Workspace File]"
+        
+        # Fallback to "Unknown"
+        return f"Unknown ({self.id[:8]}...)"
 
     @property
     def missing_from_index(self) -> Set[str]:
@@ -292,6 +321,7 @@ def main():
     dry_run = '--dry-run' in sys.argv
     auto_yes = '--yes' in sys.argv
     remove_orphans = '--remove-orphans' in sys.argv
+    recover_orphans = '--recover-orphans' in sys.argv
 
     print()
     print("=" * 70)
@@ -306,6 +336,9 @@ def main():
     if remove_orphans:
         print("🗑️  REMOVE ORPHANS MODE - Orphaned index entries will be removed")
         print()
+    
+    if recover_orphans:
+        print("📥 RECOVER ORPHANS MODE - Orphaned sessions will be copied from other workspaces")
         print()
 
     # Scan all workspaces
@@ -335,9 +368,14 @@ def main():
     recoverable_orphans = {}  # session_id -> source workspace
 
     for i, ws in enumerate(needs_repair, 1):
-        print(f"{i}. Workspace: {ws.id}")
+        print(f"{i}. Workspace: {ws.get_display_name()}")
+        # Show full ID if we have Unknown workspace
+        if not ws.folder and not ws.workspace_file:
+            print(f"   ID: {ws.id}")
         if ws.folder:
             print(f"   Folder: {ws.folder}")
+        elif ws.workspace_file:
+            print(f"   Workspace file: {ws.workspace_file}")
         print(f"   Sessions on disk: {len(ws.sessions_on_disk)}")
         print(f"   Sessions in index: {len(ws.sessions_in_index)}")
 
@@ -362,15 +400,13 @@ def main():
                     found_ws = found_info['workspace']
                     same_project = found_info['same_project']
                     
-                    folder_display = f" ({found_ws.folder})" if found_ws.folder else ""
-                    
                     if same_project:
                         # Highlight that it's from the same project
                         project_name = extract_project_name(ws.folder)
-                        print(f"      💡 Session {session_id[:8]}... found in workspace {found_ws.id}{folder_display}")
+                        print(f"      💡 Session {session_id[:8]}... found in workspace: {found_ws.get_display_name()}")
                         print(f"         ⭐ Same project folder: '{project_name}' - likely belongs here!")
                     else:
-                        print(f"      💡 Session {session_id[:8]}... found in workspace {found_ws.id}{folder_display}")
+                        print(f"      💡 Session {session_id[:8]}... found in workspace: {found_ws.get_display_name()}")
 
         print()
 
@@ -379,8 +415,59 @@ def main():
     print(f"   Orphaned entries: {total_orphaned}")
     if recoverable_orphans:
         print(f"   🔍 Orphans found in other workspaces: {len(recoverable_orphans)}")
-        print(f"      (You can copy these .json files if needed)")
+        if recover_orphans:
+            print(f"      📥 Will be recovered (copied back)")
+        else:
+            print(f"      (Use --recover-orphans to copy them back)")
     print()
+
+    # Copy orphaned sessions from other workspaces if requested
+    total_recovered = 0
+    if recover_orphans and recoverable_orphans and not dry_run:
+        print("📥 Recovering orphaned sessions from other workspaces...")
+        print()
+        
+        # Group by target workspace
+        recovery_map = {}  # workspace -> list of (session_id, source_workspace)
+        for session_id, found_info in recoverable_orphans.items():
+            # Find which workspace needs this session
+            for ws in needs_repair:
+                if session_id in ws.orphaned_in_index:
+                    if ws not in recovery_map:
+                        recovery_map[ws] = []
+                    recovery_map[ws].append((session_id, found_info['workspace']))
+                    break
+        
+        for target_ws, sessions_to_recover in recovery_map.items():
+            print(f"   Recovering to: {target_ws.get_display_name()}")
+            
+            # Ensure sessions directory exists
+            target_ws.sessions_dir.mkdir(parents=True, exist_ok=True)
+            
+            for session_id, source_ws in sessions_to_recover:
+                source_file = source_ws.sessions_dir / f"{session_id}.json"
+                target_file = target_ws.sessions_dir / f"{session_id}.json"
+                
+                try:
+                    shutil.copy2(source_file, target_file)
+                    print(f"      ✅ Copied {session_id[:8]}... from {source_ws.get_display_name()}")
+                    total_recovered += 1
+                    # Update the workspace's sessions_on_disk to include this session
+                    target_ws.sessions_on_disk.add(session_id)
+                except Exception as e:
+                    print(f"      ❌ Failed to copy {session_id[:8]}...: {e}")
+            
+            print()
+        
+        print(f"📥 Recovered {total_recovered} session(s)")
+        print()
+    elif recover_orphans and recoverable_orphans and dry_run:
+        print("📥 DRY RUN: Would recover these sessions:")
+        for session_id, found_info in recoverable_orphans.items():
+            found_ws = found_info['workspace']
+            print(f"   {session_id[:8]}... from {found_ws.get_display_name()}")
+        print()
+
 
     # Confirm before proceeding
     if not dry_run and not auto_yes:
@@ -403,8 +490,9 @@ def main():
     all_restored_sessions = []
 
     for ws in needs_repair:
-        folder_display = f" ({ws.folder})" if ws.folder else ""
-        print(f"   Repairing: {ws.id}{folder_display}")
+        print(f"   Repairing: {ws.get_display_name()}")
+        if ws.folder:
+            print(f"      Path: {ws.folder}")
 
         result = repair_workspace(ws, dry_run=dry_run, show_details=dry_run, remove_orphans=remove_orphans)
 

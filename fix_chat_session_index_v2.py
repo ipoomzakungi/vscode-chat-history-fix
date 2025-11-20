@@ -15,9 +15,10 @@ Solution:
 - Scan all session JSON files
 - Extract metadata (title, timestamp, etc.)
 - Rebuild the chat.ChatSessionStore.index in state.vscdb
+- Optionally recover orphaned sessions from other workspaces
 
 Usage:
-    python3 fix_chat_session_index_v2.py [workspace_id] [--dry-run] [--remove-orphans] [--yes]
+    python3 fix_chat_session_index_v2.py [workspace_id] [OPTIONS]
 
     If workspace_id is not provided, the script will list available workspaces.
 
@@ -25,6 +26,7 @@ Options:
     --dry-run          Show what would be fixed without making changes
     --remove-orphans   Remove orphaned index entries (sessions in index but no file)
                        By default orphaned entries are kept for safety
+    --recover-orphans  Copy orphaned session files from other workspaces when found
     --yes              Skip confirmation prompt
 
 IMPORTANT: Close VS Code completely before running this script!
@@ -188,25 +190,54 @@ def print_workspaces(workspaces):
         return
 
     for i, ws in enumerate(workspaces_with_sessions, 1):
-        print(f"{i}. Workspace ID: {ws['id']}")
+        # Extract workspace display name
+        workspace_name = f"Unknown ({ws['id'][:8]}...)"
+        workspace_path_info = None
+        
+        if ws['info']:
+            # Check for folder-based workspace
+            if 'folder' in ws['info']:
+                folder = ws['info']['folder']
+                folder_path = None
+                if isinstance(folder, str):
+                    folder_path = folder
+                    workspace_path_info = ('Folder', folder)
+                elif isinstance(folder, dict) and 'path' in folder:
+                    folder_path = folder['path']
+                    workspace_path_info = ('Folder', folder['path'])
+                
+                if folder_path:
+                    project_name = extract_project_name(folder_path)
+                    if project_name:
+                        workspace_name = f"{project_name} ({ws['id'][:8]}...) [Folder]"
+            
+            # Check for .code-workspace file
+            elif 'workspace' in ws['info']:
+                workspace_file = ws['info']['workspace']
+                workspace_path_info = ('Workspace file', workspace_file)
+                workspace_file_name = extract_project_name(workspace_file)
+                if workspace_file_name:
+                    # Remove .code-workspace extension if present
+                    if workspace_file_name.endswith('.code-workspace'):
+                        workspace_file_name = workspace_file_name[:-15]
+                    workspace_name = f"{workspace_file_name} ({ws['id'][:8]}...) [Workspace File]"
+        
+        print(f"{i}. Workspace: {workspace_name}")
 
-        if ws['info'] and 'folder' in ws['info']:
-            folder = ws['info']['folder']
-            if isinstance(folder, str):
-                print(f"   Folder: {folder}")
-            elif isinstance(folder, dict) and 'path' in folder:
-                print(f"   Folder: {folder['path']}")
+        if workspace_path_info:
+            print(f"   {workspace_path_info[0]}: {workspace_path_info[1]}")
 
         print(f"   Sessions: {ws['session_count']}")
         print(f"   Database: {'✅' if ws['has_db'] else '❌'}")
         print()
 
-def repair_workspace(workspace_path, dry_run: bool = False, remove_orphans: bool = False):
+def repair_workspace(workspace_path, dry_run: bool = False, remove_orphans: bool = False, recover_orphans: bool = False):
     """Repair the chat session index for a specific workspace.
 
     dry_run: if True, do not write changes to the database
     remove_orphans: if True, orphaned index entries will be removed;
                     otherwise they will be preserved (kept) in the index
+    recover_orphans: if True, copy orphaned session files from other workspaces
     """
     workspace_storage = Path(workspace_path)
 
@@ -226,30 +257,50 @@ def repair_workspace(workspace_path, dry_run: bool = False, remove_orphans: bool
         print(f"❌ Error: Database not found: {db_path}")
         return 1
 
-    print(f"📁 Workspace ID: {workspace_storage.name}")
-    print(f"📁 Sessions Directory: {sessions_dir}")
-    print(f"📁 Database: {db_path}")
-    
     # Get workspace folder for project matching
     workspace_json = workspace_storage / "workspace.json"
     current_workspace_folder = None
+    current_workspace_file = None
     if workspace_json.exists():
         try:
             with open(workspace_json, 'r') as f:
                 info = json.load(f)
+                # Check for folder-based workspace
                 if 'folder' in info:
                     folder_data = info['folder']
                     if isinstance(folder_data, str):
                         current_workspace_folder = folder_data
                     elif isinstance(folder_data, dict) and 'path' in folder_data:
                         current_workspace_folder = folder_data['path']
+                # Check for .code-workspace file
+                elif 'workspace' in info:
+                    current_workspace_file = info['workspace']
         except:
             pass
+    
+    # Display workspace info with nice formatting
+    workspace_display_name = f"Unknown ({workspace_storage.name[:8]}...)"
     
     if current_workspace_folder:
         project_name = extract_project_name(current_workspace_folder)
         if project_name:
-            print(f"📁 Project: {project_name}")
+            workspace_display_name = f"{project_name} ({workspace_storage.name[:8]}...) [Folder]"
+    elif current_workspace_file:
+        workspace_name = extract_project_name(current_workspace_file)
+        if workspace_name:
+            # Remove .code-workspace extension if present
+            if workspace_name.endswith('.code-workspace'):
+                workspace_name = workspace_name[:-15]
+            workspace_display_name = f"{workspace_name} ({workspace_storage.name[:8]}...) [Workspace File]"
+    
+    print(f"📁 Workspace: {workspace_display_name}")
+    print(f"📁 ID: {workspace_storage.name}")
+    if current_workspace_folder:
+        print(f"📁 Folder: {current_workspace_folder}")
+    elif current_workspace_file:
+        print(f"📁 Workspace file: {current_workspace_file}")
+    print(f"📁 Sessions Directory: {sessions_dir}")
+    print(f"📁 Database: {db_path}")
     
     print()
 
@@ -286,6 +337,8 @@ def repair_workspace(workspace_path, dry_run: bool = False, remove_orphans: bool
     missing_from_index = sessions_on_disk - sessions_in_index
     orphaned_in_index = sessions_in_index - sessions_on_disk
     
+    recoverable_orphans = {}
+    
     if missing_from_index:
         print(f"   ⚠️  Missing from index: {len(missing_from_index)}")
     
@@ -293,26 +346,74 @@ def repair_workspace(workspace_path, dry_run: bool = False, remove_orphans: bool
         print(f"   🗑️  Orphaned in index: {len(orphaned_in_index)}")
         
         # Check if orphans exist in other workspaces
-        recoverable_orphans = {}
         for session_id in orphaned_in_index:
             found_info = find_session_in_workspaces(session_id, workspace_storage.name, current_workspace_folder)
             if found_info:
                 recoverable_orphans[session_id] = found_info
-                folder_display = f" ({found_info['folder']})" if found_info['folder'] else ""
+                
+                # Create display name for found workspace
+                found_workspace_name = found_info['workspace_id']
+                if found_info['folder']:
+                    found_project = extract_project_name(found_info['folder'])
+                    if found_project:
+                        found_workspace_name = f"{found_project} ({found_info['workspace_id'][:8]}...)"
                 
                 if found_info['same_project']:
                     # Highlight that it's from the same project
                     project_name = extract_project_name(current_workspace_folder)
-                    print(f"      💡 Session {session_id[:8]}... found in workspace {found_info['workspace_id']}{folder_display}")
+                    print(f"      💡 Session {session_id[:8]}... found in workspace: {found_workspace_name}")
                     print(f"         ⭐ Same project folder: '{project_name}' - likely belongs here!")
                 else:
-                    print(f"      💡 Session {session_id[:8]}... found in workspace {found_info['workspace_id']}{folder_display}")
+                    print(f"      💡 Session {session_id[:8]}... found in workspace: {found_workspace_name}")
         
         if recoverable_orphans:
             print(f"      🔍 {len(recoverable_orphans)} orphan(s) found in other workspaces")
-            print(f"         You can copy these .json files if you want to recover them")
+            if recover_orphans:
+                print(f"         📥 Will be recovered (copied back)")
+            else:
+                print(f"         You can copy these .json files if you want to recover them")
     
     print()
+    
+    # Recover orphaned sessions if requested
+    total_recovered = 0
+    if recover_orphans and recoverable_orphans and not dry_run:
+        print("📥 Recovering orphaned sessions...")
+        print()
+        
+        # Ensure sessions directory exists
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        
+        for session_id, found_info in recoverable_orphans.items():
+            source_file = found_info['session_file']
+            target_file = sessions_dir / f"{session_id}.json"
+            
+            try:
+                shutil.copy2(source_file, target_file)
+                found_workspace_name = found_info['workspace_id'][:8] + "..."
+                if found_info['folder']:
+                    found_project = extract_project_name(found_info['folder'])
+                    if found_project:
+                        found_workspace_name = f"{found_project} ({found_info['workspace_id'][:8]}...)"
+                
+                print(f"   ✅ Copied {session_id[:8]}... from {found_workspace_name}")
+                total_recovered += 1
+                # Add to sessions on disk
+                sessions_on_disk.add(session_id)
+            except Exception as e:
+                print(f"   ❌ Failed to copy {session_id[:8]}...: {e}")
+        
+        print()
+        print(f"📥 Recovered {total_recovered} session(s)")
+        print()
+        
+        # Re-scan session files after recovery
+        session_files = list(sessions_dir.glob("*.json"))
+    elif recover_orphans and recoverable_orphans and dry_run:
+        print("📥 DRY RUN: Would recover these sessions:")
+        for session_id in recoverable_orphans:
+            print(f"   {session_id[:8]}...")
+        print()
 
     if len(session_files) == 0:
         print("ℹ️  No session files found. Nothing to do.")
@@ -468,6 +569,7 @@ def main():
     # Parse flags
     dry_run = '--dry-run' in sys.argv
     remove_orphans = '--remove-orphans' in sys.argv
+    recover_orphans = '--recover-orphans' in sys.argv
     auto_yes = '--yes' in sys.argv
 
     # find first non-flag argument to use as workspace id
@@ -497,7 +599,7 @@ def main():
                 return 1
             print()
 
-        return repair_workspace(workspace_path, dry_run=dry_run, remove_orphans=remove_orphans)
+        return repair_workspace(workspace_path, dry_run=dry_run, remove_orphans=remove_orphans, recover_orphans=recover_orphans)
 
     # No workspace ID provided - list available workspaces
     workspaces = list_workspaces()
